@@ -1,16 +1,12 @@
-import {
-  Home,
-  Inbox,
-  Settings,
-  HelpCircle,
-  Store,
-  BookOpen,
-} from "lucide-react";
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Home, Settings, HelpCircle, Store, BookOpen } from "lucide-react";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useSidebar } from "@/components/ui/sidebar"; // import useSidebar hook
 import { useEffect, useState, useRef } from "react";
-import { useAtom } from "jotai";
+import type { ComponentType } from "react";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { dropdownOpenAtom } from "@/atoms/uiAtoms";
+import { selectedAppIdAtom } from "@/atoms/appAtoms";
+import { selectedChatIdAtom } from "@/atoms/chatAtoms";
 
 import {
   Sidebar,
@@ -29,6 +25,13 @@ import { AppList } from "./AppList";
 import { HelpDialog } from "./HelpDialog"; // Import the new dialog
 import { SettingsList } from "./SettingsList";
 import { LibraryList } from "./LibraryList";
+import {
+  type AppSidebarHoverState,
+  type AppSidebarItemTitle,
+  getSelectedSidebarPanel,
+  isSidebarItemActive,
+  shouldShowSelectedAppChatList,
+} from "./app-sidebar-state";
 
 // Menu items.
 const items = [
@@ -36,11 +39,6 @@ const items = [
     title: "Apps",
     to: "/",
     icon: Home,
-  },
-  {
-    title: "Chat",
-    to: "/chat",
-    icon: Inbox,
   },
   {
     title: "Settings",
@@ -57,23 +55,23 @@ const items = [
     to: "/hub",
     icon: Store,
   },
-];
-
-// Hover state types
-type HoverState =
-  | "start-hover:app"
-  | "start-hover:chat"
-  | "start-hover:settings"
-  | "start-hover:library"
-  | "clear-hover"
-  | "no-hover";
+] satisfies Array<{
+  title: AppSidebarItemTitle;
+  to: string;
+  icon: ComponentType<{ className?: string }>;
+}>;
 
 export function AppSidebar() {
   const { state, toggleSidebar } = useSidebar(); // retrieve current sidebar state
-  const [hoverState, setHoverState] = useState<HoverState>("no-hover");
+  const [hoverState, setHoverState] =
+    useState<AppSidebarHoverState>("no-hover");
   const expandedByHover = useRef(false);
   const [isHelpDialogOpen, setIsHelpDialogOpen] = useState(false); // State for dialog
   const [isDropdownOpen] = useAtom(dropdownOpenAtom);
+  const selectedAppId = useAtomValue(selectedAppIdAtom);
+  const setSelectedAppId = useSetAtom(selectedAppIdAtom);
+  const setSelectedChatId = useSetAtom(selectedChatIdAtom);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (hoverState.startsWith("start-hover") && state === "collapsed") {
@@ -93,33 +91,21 @@ export function AppSidebar() {
   }, [hoverState, toggleSidebar, state, setHoverState, isDropdownOpen]);
 
   const routerState = useRouterState();
-  const isAppRoute =
-    routerState.location.pathname === "/" ||
-    routerState.location.pathname.startsWith("/app-details");
-  const isChatRoute = routerState.location.pathname === "/chat";
-  const isSettingsRoute = routerState.location.pathname.startsWith("/settings");
-  const isLibraryRoute = routerState.location.pathname.startsWith("/library");
+  const selectedItem = getSelectedSidebarPanel({
+    hoverState,
+    sidebarState: state,
+    pathname: routerState.location.pathname,
+  });
+  const showSelectedAppChats = shouldShowSelectedAppChatList({
+    selectedPanel: selectedItem,
+    selectedAppId,
+  });
 
-  let selectedItem: string | null = null;
-  if (hoverState === "start-hover:app") {
-    selectedItem = "Apps";
-  } else if (hoverState === "start-hover:chat") {
-    selectedItem = "Chat";
-  } else if (hoverState === "start-hover:settings") {
-    selectedItem = "Settings";
-  } else if (hoverState === "start-hover:library") {
-    selectedItem = "Library";
-  } else if (state === "expanded") {
-    if (isAppRoute) {
-      selectedItem = "Apps";
-    } else if (isChatRoute) {
-      selectedItem = "Chat";
-    } else if (isSettingsRoute) {
-      selectedItem = "Settings";
-    } else if (isLibraryRoute) {
-      selectedItem = "Library";
-    }
-  }
+  const handleViewAllApps = () => {
+    setSelectedAppId(null);
+    setSelectedChatId(null);
+    navigate({ to: "/" });
+  };
 
   return (
     <Sidebar
@@ -143,8 +129,12 @@ export function AppSidebar() {
           </div>
           {/* Right Column: Chat List Section */}
           <div className="w-[272px]">
-            <AppList show={selectedItem === "Apps"} />
-            <ChatList show={selectedItem === "Chat"} />
+            <AppList show={selectedItem === "Apps" && !showSelectedAppChats} />
+            <ChatList
+              show={showSelectedAppChats}
+              showViewAllAppsButton
+              onViewAllApps={handleViewAllApps}
+            />
             <SettingsList show={selectedItem === "Settings"} />
             <LibraryList show={selectedItem === "Library"} />
           </div>
@@ -179,7 +169,7 @@ export function AppSidebar() {
 function AppIcons({
   onHoverChange,
 }: {
-  onHoverChange: (state: HoverState) => void;
+  onHoverChange: (state: AppSidebarHoverState) => void;
 }) {
   const routerState = useRouterState();
   const pathname = routerState.location.pathname;
@@ -192,9 +182,10 @@ function AppIcons({
       <SidebarGroupContent>
         <SidebarMenu>
           {items.map((item) => {
-            const isActive =
-              (item.to === "/" && pathname === "/") ||
-              (item.to !== "/" && pathname.startsWith(item.to));
+            const isActive = isSidebarItemActive({
+              title: item.title,
+              pathname,
+            });
 
             return (
               <SidebarMenuItem key={item.title}>
@@ -208,8 +199,6 @@ function AppIcons({
                   onMouseEnter={() => {
                     if (item.title === "Apps") {
                       onHoverChange("start-hover:app");
-                    } else if (item.title === "Chat") {
-                      onHoverChange("start-hover:chat");
                     } else if (item.title === "Settings") {
                       onHoverChange("start-hover:settings");
                     } else if (item.title === "Library") {
